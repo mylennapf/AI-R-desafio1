@@ -2,15 +2,86 @@
 
 ETL que extrai clientes e pedidos da API local da Verdejar e o catálogo de produtos do CSV, trata as armadilhas A1 a A6 e carrega tudo no PostgreSQL.
 
+**Uso de IA:** o registro de sugestões aceitas, sugestões rejeitadas e falhas com retrabalho está em [`COMO_USEI_IA.md`](COMO_USEI_IA.md).
+
+## Como rodar do zero
+
+Pré-requisitos: Python 3, Docker e Git. Todos os comandos rodam na raiz do repositório, no PowerShell.
+
+1. Instale as dependências (psycopg e pytest):
+
+   ```
+   python -m pip install -r requirements.txt
+   ```
+
+2. Crie o `.env` a partir do exemplo e defina uma senha em `PGPASSWORD`:
+
+   ```
+   Copy-Item .env.example .env
+   ```
+
+3. Suba o PostgreSQL. Use a mesma senha do `.env`:
+
+   ```
+   docker run --name verdejar-pg -e POSTGRES_PASSWORD=<sua_senha> -e POSTGRES_DB=verdejar -p 5433:5432 -d postgres:16
+   ```
+
+4. Aplique o esquema:
+
+   ```
+   Get-Content insumos\schema.sql | docker exec -i verdejar-pg psql -U postgres -d verdejar
+   ```
+
+5. Em outro terminal, suba a API e deixe-a rodando:
+
+   ```
+   cd insumos
+   python api_verdejar.py
+   ```
+
+6. Rode o ETL completo (extração, transformação, carga e reconciliação):
+
+   ```
+   python -m etl.main
+   ```
+
+7. Rode os testes:
+
+   ```
+   python -m pytest -v
+   ```
+
+8. (Opcional) Rode as consultas de validação:
+
+   ```
+   Get-Content consultas_validacao.sql | docker exec -i verdejar-pg psql -U postgres -d verdejar
+   ```
+
+Se o computador ou o Docker reiniciar, religue o banco com `docker start verdejar-pg`. Os dados continuam lá.
+
+As seções a seguir detalham cada etapa e trazem as evidências de execução.
+
 ## Estrutura
 
 ```
-README.md
-COMO_USEI_IA.md
-insumos/   gerar_dados.py, api_verdejar.py, schema.sql, schema_sqlite.sql, dados/
-etl/       código do ETL
-tests/     testes com pytest
-brutos/    dados extraídos da API (fora do Git, ver .gitignore)
+README.md                 este arquivo: como rodar, decisões e evidências
+COMO_USEI_IA.md           registro do uso da IA
+CONTRATO_DE_DADOS.md      campos, tipos, nulos e regras de cada tabela de destino
+consultas_validacao.sql   consultas (a) vendas por mês, (b) pedidos por estado, (c) divergentes
+requirements.txt          dependências (psycopg, pytest)
+pytest.ini                configuração do pytest
+.env.example              modelo das variáveis de conexão (o .env real fica fora do Git)
+insumos/                  gerar_dados.py, api_verdejar.py, schema.sql, schema_sqlite.sql, dados/
+etl/
+  extracao.py             API paginada e CSV, grava brutos/
+  transformacao.py        armadilhas A1 a A6 em funções puras e contadores
+  carga.py                conexão e recarga transacional no PostgreSQL
+  reconciliacao.py        compara contagens e somas entre origem e destino
+  main.py                 executa o ETL completo
+tests/
+  test_transformacao.py   testes das armadilhas A1 a A6
+  test_reconciliacao.py   reconciliação e teste de consulta (precisa do banco)
+brutos/                   dados extraídos da API (fora do Git, ver .gitignore)
 ```
 
 ## Banco de dados: caminho B (PostgreSQL 16 em Docker)
