@@ -9,6 +9,7 @@ import sys
 
 from etl.carga import ErroCarga, carregar, conectar
 from etl.extracao import ErroExtracao, extrair_tudo
+from etl.reconciliacao import reconciliar
 from etl.transformacao import ler_brutos, transformar_tudo
 
 
@@ -29,6 +30,8 @@ def main(argv=None):
 
         with conectar() as conexao:
             carregar(tabelas, conexao)
+            if not reconciliar(pedidos, conexao):
+                return 2
     except FileNotFoundError as erro:
         print(f"erro: dados brutos nao encontrados ({erro.filename}); rode sem --sem-api primeiro")
         return 1

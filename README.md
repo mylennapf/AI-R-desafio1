@@ -167,3 +167,140 @@ Outras verificações feitas:
 - **Valores no banco:** `SUM(valor_itens)` = 311228.75, 238 pedidos com `divergente`, 81 clientes com `email IS NULL`, nenhum estado em minúsculas. As datas vão de 2026-01-01 a 2026-10-28.
 - **Rollback:** forcei um `produto_id` inexistente em um item. A carga falhou com `erro: carga desfeita (rollback): ... violates foreign key constraint ...`, e as contagens continuaram 12 / 1000 / 5000 / 12455.
 - **Banco fora do ar** (`PGPORT=5999`): `erro: nao foi possivel conectar ao PostgreSQL em 127.0.0.1:5999 (connection timeout expired); o conteiner verdejar-pg esta rodando?`, com código de saída 1.
+
+## Testes e reconciliação (Parte 4)
+
+### Como rodar os testes
+
+```
+python -m pytest -v
+```
+
+A configuração está em `pytest.ini`: a pasta de testes é `tests/` e a raiz do projeto entra no `sys.path`, para que `import etl...` funcione.
+
+- `tests/test_transformacao.py` tem 14 testes, pelo menos um por armadilha (A1 a A6). Os três obrigatórios são A3 (data), A4 (valor com vírgula) e A5 (pedido repetido). Cada teste usa uma entrada conhecida e compara com a saída esperada.
+- `tests/test_reconciliacao.py` tem 3 testes que precisam do banco no ar e de `brutos/`. Antes deles, um fixture faz a carga a partir de `brutos/`. Se o banco ou os brutos não estiverem disponíveis, os testes são pulados (*skip*), com o motivo.
+  - **Contagem:** os pedidos únicos da origem são iguais à contagem de linhas da tabela `pedidos`.
+  - **Soma:** `valor_itens` da origem é igual a `SUM(valor_itens)` do destino, com tolerância de 1 centavo.
+  - **Teste de consulta (a):** a soma dos meses é igual à soma geral da tabela, tanto em `valor_itens` quanto em `valor_total`.
+
+Em `etl/reconciliacao.py`, o lado "origem" é recalculado direto dos JSON brutos, sem usar as funções de `transformacao.py`. Assim, um erro na transformação não aparece igual dos dois lados da conta e passa despercebido.
+
+Os valores monetários usam `Decimal`. Por isso o teste da A4 compara com `Decimal("125.84")`, e não com o float `125.84` do exemplo do Apêndice A.
+
+Saída do pytest:
+
+```
+$ python -m pytest -v
+collected 17 items
+
+tests/test_reconciliacao.py::test_reconciliacao_contagem_de_pedidos PASSED
+tests/test_reconciliacao.py::test_reconciliacao_soma_valor_itens_tolerando_um_centavo PASSED
+tests/test_reconciliacao.py::test_consulta_vendas_por_mes_soma_igual_a_soma_geral PASSED
+tests/test_transformacao.py::test_a1_cliente_sem_email_e_mantido_com_email_nulo PASSED
+tests/test_transformacao.py::test_a1_email_em_branco_vira_nulo PASSED
+tests/test_transformacao.py::test_a2_estado_minusculo_vira_maiusculo PASSED
+tests/test_transformacao.py::test_a2_estado_invalido_gera_erro PASSED
+tests/test_transformacao.py::test_a3_data_iso_e_brasileira_viram_a_mesma_data PASSED
+tests/test_transformacao.py::test_a3_data_em_formato_desconhecido_gera_erro PASSED
+tests/test_transformacao.py::test_a4_valor_com_virgula_vira_numero PASSED
+tests/test_transformacao.py::test_a4_valor_numerico_permanece_com_duas_casas PASSED
+tests/test_transformacao.py::test_a4_valor_invalido_gera_erro PASSED
+tests/test_transformacao.py::test_a5_pedido_repetido_fica_uma_vez_mantendo_a_primeira_ocorrencia PASSED
+tests/test_transformacao.py::test_a5_aplicar_duas_vezes_nao_muda_o_resultado PASSED
+tests/test_transformacao.py::test_a6_valor_itens_e_soma_de_quantidade_vezes_preco PASSED
+tests/test_transformacao.py::test_a6_tolerancia_de_um_centavo PASSED
+tests/test_transformacao.py::test_a6_pedido_divergente_grava_os_dois_valores_e_marca PASSED
+
+============================= 17 passed in 2.13s ==============================
+```
+
+### Saída completa do ETL, com a reconciliação
+
+O `python -m etl.main` termina com a reconciliação. O código de saída é 2 se origem e destino não baterem.
+
+```
+extracao: clientes paginas=10 registros=1000
+extracao: pedidos paginas=51 registros_brutos=5100
+extracao: produtos registros=12
+transformacao: pedidos_unicos=5000 repetidos_descartados=100
+transformacao: emails_nulos=81 estados_padronizados=151 datas_convertidas=1037 valores_convertidos=1255
+transformacao: divergentes=238
+carga: clientes=1000 produtos=12 pedidos=5000 itens=12455
+reconciliacao: pedidos_origem=5000 pedidos_destino=5000
+reconciliacao: soma_valor_itens_origem=311228.75 soma_valor_itens_destino=311228.75 diferenca=0.00
+divergentes: 238 pedidos com valor_total diferente da soma dos itens
+```
+
+### Consultas de validação
+
+As consultas estão em [`consultas_validacao.sql`](consultas_validacao.sql). Para rodar (PowerShell):
+
+```
+Get-Content consultas_validacao.sql | docker exec -i verdejar-pg psql -U postgres -d verdejar
+```
+
+Critério adotado: "vendas" inclui todos os pedidos carregados, inclusive os cancelados. A consulta mostra os dois valores: `total_itens` (soma de `valor_itens`, calculado) e `total_informado` (soma de `valor_total`, vindo da origem).
+
+**(a) Total de vendas por mês**
+
+```
+   mes   | pedidos | total_itens | total_informado
+---------+---------+-------------+-----------------
+ 2026-01 |     488 |    30355.02 |        30449.02
+ 2026-02 |     536 |    33855.86 |        33923.86
+ 2026-03 |     487 |    30617.70 |        30678.70
+ 2026-04 |     521 |    31170.96 |        31253.96
+ 2026-05 |     512 |    30777.02 |        30890.02
+ 2026-06 |     523 |    31557.73 |        31627.73
+ 2026-07 |     519 |    32685.17 |        32796.17
+ 2026-08 |     458 |    29260.04 |        29328.04
+ 2026-09 |     476 |    29909.71 |        29995.71
+ 2026-10 |     480 |    31039.54 |        31104.54
+(10 rows)
+```
+
+**(a) Teste de consulta: soma dos meses igual à soma geral**
+
+```
+ soma_meses_itens | soma_geral_itens | itens_ok | informado_ok
+------------------+------------------+----------+--------------
+        311228.75 |        311228.75 | t        | t
+```
+
+Os 10 meses somam 5000 pedidos, que é o total da tabela. O mesmo teste roda automaticamente no pytest (`test_consulta_vendas_por_mes_soma_igual_a_soma_geral`).
+
+**(b) Quantidade de pedidos por estado**
+
+```
+ estado | pedidos
+--------+---------
+ RS     |    1543
+ SC     |    1127
+ PR     |     974
+ SP     |     880
+ MG     |     476
+(5 rows)
+```
+
+Aparecem só 5 estados, todos em maiúsculas. Isso confirma que a A2 foi tratada: sem o tratamento, `rs` e `RS` apareceriam como estados diferentes. Os 5 somam 5000 pedidos.
+
+**(c) Pedidos divergentes**
+
+A consulta devolve 238 linhas, o mesmo número do contador do ETL. As 5 primeiras:
+
+```
+  id  | cliente_id | data_pedido | valor_total | valor_itens | diferenca
+------+------------+-------------+-------------+-------------+-----------
+    1 |        303 | 2026-02-19  |      125.84 |      130.84 |     -5.00
+   51 |         23 | 2026-04-27  |       26.58 |       23.58 |      3.00
+   71 |        962 | 2026-05-27  |      144.35 |      134.35 |     10.00
+   81 |        198 | 2026-09-05  |       -1.84 |        3.16 |     -5.00
+  106 |        973 | 2026-05-02  |       47.78 |       44.78 |      3.00
+...
+(238 rows)
+```
+
+Distribuição das diferenças (`valor_total - valor_itens`): −5,00 em 63 pedidos, +3,00 em 88 e +10,00 em 87. Nenhuma divergência fica perto do limite de 1 centavo.
+
+O pedido 81 é o único com `valor_total` negativo (−1,84). Os itens dele somam 3,16 e a origem informou 5,00 a menos. É um efeito da própria armadilha A6, e o pedido já está marcado como divergente. Mantive o valor informado como veio, porque a regra da A6 é sinalizar a divergência e não corrigir.
