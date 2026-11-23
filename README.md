@@ -79,3 +79,36 @@ Saída ao pedir uma página inexistente (`buscar_pagina(URL_BASE, "pedidos", 999
 ```
 erro: rota /pedidos pagina 999: pagina inexistente (HTTP 404)
 ```
+
+## Transformação e contrato de dados (Parte 2)
+
+A transformação lê os arquivos de `brutos/`, sem chamar a API de novo:
+
+```
+python -m etl.transformacao
+```
+
+As regras de cada campo estão em [`CONTRATO_DE_DADOS.md`](CONTRATO_DE_DADOS.md). Cada armadilha é tratada por uma função pequena e pura em `etl/transformacao.py`:
+
+| Armadilha | Função |
+|---|---|
+| A1 e-mail ausente | `tratar_email` |
+| A2 estado em minúsculas | `padronizar_estado` |
+| A3 data em dois formatos | `converter_data` |
+| A4 valor com vírgula | `converter_valor` |
+| A5 pedido repetido | `remover_repetidos` |
+| A6 total diferente dos itens | `calcular_valor_itens` e `is_divergente` |
+
+Saída:
+
+```
+transformacao: pedidos_unicos=5000 repetidos_descartados=100
+transformacao: emails_nulos=81 estados_padronizados=151 datas_convertidas=1037 valores_convertidos=1255
+transformacao: divergentes=238
+```
+
+Os números foram conferidos assim:
+- 5100 pedidos brutos menos 100 repetidos dá 5000 pedidos únicos. As cópias repetidas têm o conteúdo idêntico ao da primeira ocorrência.
+- As datas convertidas (1037) e os valores convertidos (1255) contam só os pedidos únicos. Nos brutos, que incluem as cópias, são 1054 e 1287.
+- Os 238 pedidos divergentes têm diferença de pelo menos R$ 3,00. Nos outros 4762 a diferença é zero, então a tolerância de 1 centavo não deixa casos ambíguos.
+- Total de itens: 12455. Soma de `valor_itens`: 311228.75.
