@@ -42,3 +42,40 @@ python api_verdejar.py
 ```
 
 Em outro terminal: `curl http://127.0.0.1:8000/saude` deve responder `{"status": "ok"}`.
+
+## Extração (Parte 1)
+
+Com a API rodando, na raiz do repositório:
+
+```
+python -m etl.extracao
+```
+
+O código está em `etl/extracao.py` e usa apenas a biblioteca padrão (`urllib`, `csv`, `json`):
+
+- `buscar_pagina` pede uma página com `page` e `page_size=100` e confere se o status HTTP é 200. Página inexistente (404), outros status, falha de conexão, timeout e JSON inválido viram uma `ErroExtracao` com mensagem clara.
+- `extrair_rota` percorre as páginas de 1 até `total_pages` e confere se a quantidade recebida bate com `total_items`.
+- `ler_produtos` lê o `produtos.csv` com `csv.DictReader`.
+- Os dados brutos são gravados em `brutos/clientes.json`, `brutos/pedidos.json` e `brutos/produtos.json` antes de qualquer transformação.
+- Em caso de erro, o programa imprime `erro: ...` e termina com código 1, sem traceback.
+- A URL da API pode ser trocada pela variável de ambiente `VERDEJAR_API_URL`.
+
+Saída da extração:
+
+```
+extracao: clientes paginas=10 registros=1000
+extracao: pedidos paginas=51 registros_brutos=5100
+extracao: produtos registros=12
+```
+
+Saída com a API fora do ar (`VERDEJAR_API_URL=http://127.0.0.1:8999`):
+
+```
+erro: nao foi possivel conectar em http://127.0.0.1:8999 ([WinError 10061] Nenhuma conexão pôde ser feita porque a máquina de destino as recusou ativamente); a API esta rodando?
+```
+
+Saída ao pedir uma página inexistente (`buscar_pagina(URL_BASE, "pedidos", 999)`):
+
+```
+erro: rota /pedidos pagina 999: pagina inexistente (HTTP 404)
+```
