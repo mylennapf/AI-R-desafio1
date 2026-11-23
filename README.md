@@ -112,3 +112,58 @@ Os números foram conferidos assim:
 - As datas convertidas (1037) e os valores convertidos (1255) contam só os pedidos únicos. Nos brutos, que incluem as cópias, são 1054 e 1287.
 - Os 238 pedidos divergentes têm diferença de pelo menos R$ 3,00. Nos outros 4762 a diferença é zero, então a tolerância de 1 centavo não deixa casos ambíguos.
 - Total de itens: 12455. Soma de `valor_itens`: 311228.75.
+
+## Carga no banco (Parte 3)
+
+ETL completo, com a API e o contêiner no ar:
+
+```
+python -m etl.main            (extrai da API, transforma e carrega)
+python -m etl.main --sem-api  (reprocessa a partir de brutos/, sem chamar a API)
+```
+
+O código está em `etl/carga.py`, com `psycopg` 3:
+
+- **Conexão:** as variáveis `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER` e `PGPASSWORD` vêm do ambiente ou do `.env`. A senha não aparece no código nem nas mensagens.
+- **Ordem da carga:** produtos, clientes, pedidos e itens_pedido. Os pais entram antes dos filhos, para respeitar as chaves estrangeiras.
+- **Consultas parametrizadas:** todo `INSERT` usa placeholders `%s` com `executemany`. Os dados nunca são concatenados ao SQL. Os nomes de tabela e coluna vêm de constantes fixas do código.
+
+### Estratégia de idempotência
+
+A carga é uma recarga completa dentro de uma única transação:
+
+```
+BEGIN; TRUNCATE itens_pedido, pedidos, clientes, produtos; INSERT ... (4 tabelas); COMMIT;
+```
+
+- Rodar duas vezes dá o mesmo resultado, porque cada execução substitui todo o conteúdo pelo resultado da transformação, que é determinística.
+- Se algo falhar no meio, o `ROLLBACK` devolve o banco ao estado anterior, sem carga parcial.
+- Escolhi essa estratégia em vez de "inserir ignorando chaves existentes" (`ON CONFLICT DO NOTHING`). Com essa outra opção, um pedido corrigido na origem nunca seria atualizado. Com 5000 pedidos, recarregar tudo leva poucos segundos.
+
+### Evidência: duas execuções seguidas
+
+```
+=== execucao 1 ===
+extracao: clientes paginas=10 registros=1000
+extracao: pedidos paginas=51 registros_brutos=5100
+extracao: produtos registros=12
+transformacao: pedidos_unicos=5000 repetidos_descartados=100
+transformacao: emails_nulos=81 estados_padronizados=151 datas_convertidas=1037 valores_convertidos=1255
+transformacao: divergentes=238
+carga: clientes=1000 produtos=12 pedidos=5000 itens=12455
+=== execucao 2 ===
+extracao: clientes paginas=10 registros=1000
+extracao: pedidos paginas=51 registros_brutos=5100
+extracao: produtos registros=12
+transformacao: pedidos_unicos=5000 repetidos_descartados=100
+transformacao: emails_nulos=81 estados_padronizados=151 datas_convertidas=1037 valores_convertidos=1255
+transformacao: divergentes=238
+carga: clientes=1000 produtos=12 pedidos=5000 itens=12455
+```
+
+As contagens da linha `carga:` são lidas do banco (`SELECT COUNT(*)`) depois do `COMMIT`.
+
+Outras verificações feitas:
+- **Valores no banco:** `SUM(valor_itens)` = 311228.75, 238 pedidos com `divergente`, 81 clientes com `email IS NULL`, nenhum estado em minúsculas. As datas vão de 2026-01-01 a 2026-10-28.
+- **Rollback:** forcei um `produto_id` inexistente em um item. A carga falhou com `erro: carga desfeita (rollback): ... violates foreign key constraint ...`, e as contagens continuaram 12 / 1000 / 5000 / 12455.
+- **Banco fora do ar** (`PGPORT=5999`): `erro: nao foi possivel conectar ao PostgreSQL em 127.0.0.1:5999 (connection timeout expired); o conteiner verdejar-pg esta rodando?`, com código de saída 1.
