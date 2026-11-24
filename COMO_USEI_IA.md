@@ -1,9 +1,6 @@
 # COMO_USEI_IA.md
 
-**Ferramentas utilizadas:**
-
-- **Kiro** (assistente de IA integrado ao IDE): proposta do código do ETL, dos testes e da documentação, parte por parte.
-- **ChatGPT**: dúvidas pontuais de Python e de tratamento dos dados (sugestões 2.1 e 2.2).
+**Ferramenta utilizada:** Kiro (assistente de IA integrado ao IDE)
 
 A IA foi utilizada como ferramenta de apoio durante o desenvolvimento do ETL, principalmente para esclarecer dúvidas sobre Python, sugerir implementações pontuais e auxiliar na criação de testes automatizados.
 
@@ -129,50 +126,6 @@ Adotei uma comparação considerando a diferença entre os valores e o limite de
 
 Comparei os resultados da implementação com casos de pedidos em que os valores coincidiam e casos em que apresentavam divergências superiores à tolerância estabelecida.
 
----
-
-### 2.3. Pular páginas com erro e continuar a extração (Kiro)
-
-**Contexto:** Na Parte 1, avaliei o que a extração deveria fazer quando uma página da API falhasse no meio do processo.
-
-**Sugestão apresentada:**
-
-Se uma página falhar, registrar o erro e seguir para a próxima, para não perder a extração inteira por causa de uma página.
-
-**Por que rejeitei:**
-
-Uma página pulada são até 100 pedidos a menos, sem nenhum aviso na carga. O banco ficaria incompleto e a reconciliação, que compara as contagens da origem e do destino, deixaria de ter uma base confiável. O desafio exige que todas as páginas das duas rotas sejam consumidas. Prefiro que a extração pare com uma mensagem clara a carregar dados incompletos em silêncio.
-
-**O que fiz no lugar:**
-
-Qualquer falha de página interrompe a extração com uma `ErroExtracao` e uma mensagem `erro: ...`, sem traceback e com código de saída 1. Nada é carregado. Além disso, `extrair_rota` confere se a quantidade de registros recebidos é igual ao `total_items` informado pela API.
-
-**Como validei:**
-
-Pedi uma página inexistente (`buscar_pagina(URL_BASE, "pedidos", 999)`) e recebi `erro: rota /pedidos pagina 999: pagina inexistente (HTTP 404)`. Na execução normal, as contagens bateram com o `total_items`: 1000 clientes em 10 páginas e 5100 pedidos em 51 páginas.
-
----
-
-### 2.4. Remover os pedidos repetidos já na extração (Kiro)
-
-**Contexto:** A API devolve 5100 pedidos, dos quais 100 são cópias repetidas (armadilha A5). Avaliei em que etapa remover essas cópias.
-
-**Sugestão apresentada:**
-
-Descartar os ids repetidos já ao juntar as páginas da API, antes de gravar `brutos/pedidos.json`.
-
-**Por que rejeitei:**
-
-O desafio pede que os dados brutos sejam guardados antes de qualquer transformação, para poder reprocessar sem chamar a API de novo. Remover os repetidos é uma transformação. Se isso acontecesse na extração, os brutos deixariam de representar a origem, e eu perderia a evidência de quantas cópias existiam, que é justamente o contador `repetidos_descartados`.
-
-**O que fiz no lugar:**
-
-A extração grava os 5100 registros como vieram. A remoção acontece na transformação, na função pura `remover_repetidos`, que mantém a primeira ocorrência de cada id e devolve quantos foram descartados.
-
-**Como validei:**
-
-`brutos/pedidos.json` tem 5100 registros, e a transformação imprime `pedidos_unicos=5000 repetidos_descartados=100`. Conferi também que as 100 cópias são idênticas à primeira ocorrência, então manter a primeira não perde informação. Os testes `test_a5_pedido_repetido_fica_uma_vez_mantendo_a_primeira_ocorrencia` e `test_a5_aplicar_duas_vezes_nao_muda_o_resultado` cobrem a função.
-
 ## 3. Falhas e retrabalho
 
 ### 3.1. Comando do Docker falhou por porta ocupada (Parte 0)
@@ -263,6 +216,6 @@ Rodei `python -m pytest` novamente e todos os testes passaram (`17 passed`). A r
 
 A utilização da IA foi importante principalmente para acelerar a compreensão de problemas específicos e explorar alternativas de implementação.
 
-Durante o desenvolvimento, percebi que uma sugestão aparentemente correta nem sempre atende aos requisitos do problema. Por isso, procurei avaliar cada resposta considerando as regras do desafio, a qualidade dos dados e o comportamento esperado do ETL.
+Durante o desenvolvimento, percebi que uma sugestão aparentemente correta nem sempre atende aos requisitos do problema. Por isso, procurei avaliar cada resposta considerando as regras do desafio e de negócio, a qualidade dos dados e o comportamento esperado do ETL.
 
 A IA foi utilizada como ferramenta de apoio, mas a responsabilidade pelas decisões técnicas, implementação, correções e validação dos resultados permaneceu comigo.
