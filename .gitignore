@@ -1,0 +1,16 @@
+# Segredos (senha do banco)
+.env
+
+# Dados extraidos da API (reprocessaveis a partir da API local)
+brutos/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# SQLite (caso o caminho C seja usado)
+*.db
+*.sqlite3
